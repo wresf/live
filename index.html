@@ -1,35 +1,88 @@
 <!DOCTYPE html>
 <html>
-<head><meta charset="UTF-8"><title>Admin Panel</title></head>
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard Gabungan Google Drive</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    table, th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    #chart { max-width: 400px; }
+  </style>
+</head>
 <body>
-<h2>Tambah Akun Google Drive</h2>
-Nama: <input id="name"><br>
-URL: <input id="url" size="60"><br>
-Token: <input id="token" size="40"><br>
-<button onclick="tambah()">Tambah Akun</button>
-<h3>Hasil config.js (salin ke berkas config.js di GitHub)</h3>
-<textarea id="output" rows="15" cols="80"></textarea>
 
+<h1>Dashboard Kapasitas Google Drive Gabungan</h1>
+
+<canvas id="chart" width="400" height="400"></canvas>
+
+<h3>Total Terpakai: <span id="totalUsage">-</span> GB dari <span id="totalLimit">-</span> GB</h3>
+
+<table id="table">
+  <tr><th>Akun</th><th>Terpakai (GB)</th><th>Kapasitas (GB)</th><th>Status</th></tr>
+</table>
+
+<script src="config.js"></script>
 <script>
-function ambilData() {
-  return JSON.parse(localStorage.getItem("accounts") || "[]");
-}
-function tambah() {
-  var data = ambilData();
-  data.push({
-    name: document.getElementById("name").value,
-    url: document.getElementById("url").value,
-    token: document.getElementById("token").value
-  });
-  localStorage.setItem("accounts", JSON.stringify(data));
-  render();
-}
-function render() {
-  var data = ambilData();
-  var text = "const ACCOUNTS = " + JSON.stringify(data, null, 2) + ";";
-  document.getElementById("output").value = text;
-}
-render();
+  function bytesToGB(bytes) {
+    return (Number(bytes) / (1024 ** 3)).toFixed(2);
+  }
+
+  async function fetchAll() {
+    const results = await Promise.all(ACCOUNTS.map(async function(acc) {
+      try {
+        const res = await fetch(acc.url + "?token=" + acc.token);
+        const data = await res.json();
+        if (data.error) {
+          return { name: acc.name, error: true, message: data.error };
+        }
+        return {
+          name: acc.name,
+          email: data.email,
+          limit: data.limit,
+          usage: data.usage,
+          error: false
+        };
+      } catch (err) {
+        return { name: acc.name, error: true, message: "Gagal menghubungi server" };
+      }
+    }));
+    render(results);
+  }
+
+  function render(results) {
+    let totalLimit = 0, totalUsage = 0;
+    const table = document.getElementById("table");
+    table.innerHTML = "<tr><th>Akun</th><th>Terpakai (GB)</th><th>Kapasitas (GB)</th><th>Status</th></tr>";
+
+    results.forEach(function(r) {
+      if (r.error) {
+        table.innerHTML += "<tr><td>" + r.name + "</td><td colspan='2'>-</td><td style='color:red;'>" + r.message + "</td></tr>";
+        return;
+      }
+      totalLimit += Number(r.limit);
+      totalUsage += Number(r.usage);
+      table.innerHTML += "<tr><td>" + r.email + "</td><td>" + bytesToGB(r.usage) + "</td><td>" + bytesToGB(r.limit) + "</td><td style='color:green;'>Aktif</td></tr>";
+    });
+
+    document.getElementById("totalUsage").innerText = bytesToGB(totalUsage);
+    document.getElementById("totalLimit").innerText = bytesToGB(totalLimit);
+
+    new Chart(document.getElementById("chart"), {
+      type: "doughnut",
+      data: {
+        labels: ["Terpakai", "Tersisa"],
+        datasets: [{
+          data: [bytesToGB(totalUsage), bytesToGB(totalLimit - totalUsage)],
+          backgroundColor: ["#e74c3c", "#2ecc71"]
+        }]
+      }
+    });
+  }
+
+  fetchAll();
 </script>
+
 </body>
 </html>
