@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Admin Panel</title></head>
+<body>
+<h2>Tambah Akun Google Drive</h2>
+Nama: <input id="name"><br>
+URL: <input id="url" size="60"><br>
+Token: <input id="token" size="40"><br>
+<button onclick="tambah()">Tambah Akun</button>
+<h3>Hasil config.js (salin ke berkas config.js di GitHub)</h3>
+<textarea id="output" rows="15" cols="80"></textarea>
+
+<script>
+function ambilData() {
+  return JSON.parse(localStorage.getItem("accounts") || "[]");
+}
+function tambah() {
+  var data = ambilData();
+  data.push({
+    name: document.getElementById("name").value,
+    url: document.getElementById("url").value,
+    token: document.getElementById("token").value
+  });
+  localStorage.setItem("accounts", JSON.stringify(data));
+  render();
+}
+function render() {
+  var data = ambilData();
+  var text = "const ACCOUNTS = " + JSON.stringify(data, null, 2) + ";";
+  document.getElementById("output").value = text;
+}
+render();
+</script>
+</body>
+</html>
