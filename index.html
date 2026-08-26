@@ -1,88 +1,237 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>Dashboard Gabungan Google Drive</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 40px; }
-    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-    table, th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-    #chart { max-width: 400px; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unified Drive Explorer</title>
+<script src="https://accounts.google.com/gsi/client"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; margin: 0; display: flex; height: 100vh; }
+  #sidebar { width: 250px; background: #f4f4f4; padding: 15px; overflow-y: auto; }
+  #main { flex: 1; display: flex; flex-direction: column; }
+  #toolbar { padding: 10px; background: #2c3e50; }
+  #toolbar button { margin-right: 6px; padding: 6px 12px; cursor: pointer; }
+  #breadcrumb { padding: 8px 10px; background: #ecf0f1; font-size: 14px; }
+  #fileGrid { flex: 1; overflow-y: auto; padding: 15px; display: grid; grid-template-columns: repeat(auto-fill, 110px); gap: 15px; }
+  .item { text-align: center; cursor: pointer; font-size: 12px; }
+  .item div.icon { font-size: 40px; }
+  .item.selected { background: #d4e6f1; border-radius: 6px; }
+  .account { padding: 6px; margin-bottom: 6px; background: #fff; border-radius: 4px; font-size: 13px; }
+  @media (max-width: 700px) {
+    #sidebar { display: none; }
+    #fileGrid { grid-template-columns: repeat(auto-fill, 80px); }
+  }
+</style>
 </head>
 <body>
 
-<h1>Dashboard Kapasitas Google Drive Gabungan</h1>
+<div id="sidebar">
+  <h3>Akun Terhubung</h3>
+  <div id="accountList"></div>
+  <button onclick="tambahAkun()">+ Tambah Akun</button>
+  <hr>
+  <h4>Total Kapasitas</h4>
+  <div id="storageSummary">-</div>
+</div>
 
-<canvas id="chart" width="400" height="400"></canvas>
+<div id="main">
+  <div id="toolbar">
+    <button onclick="buatFolder()">Folder Baru</button>
+    <button onclick="uploadFileTrigger()">Upload</button>
+    <input type="file" id="fileInput" style="display:none" onchange="uploadFile(event)">
+    <button onclick="salinItem()">Copy</button>
+    <button onclick="potongItem()">Cut</button>
+    <button onclick="tempelItem()">Paste</button>
+    <button onclick="unduhItem()">Download</button>
+    <button onclick="hapusItem()">Delete</button>
+  </div>
+  <div id="breadcrumb">Root</div>
+  <div id="fileGrid"></div>
+</div>
 
-<h3>Total Terpakai: <span id="totalUsage">-</span> GB dari <span id="totalLimit">-</span> GB</h3>
-
-<table id="table">
-  <tr><th>Akun</th><th>Terpakai (GB)</th><th>Kapasitas (GB)</th><th>Status</th></tr>
-</table>
-
-<script src="config.js"></script>
 <script>
-  function bytesToGB(bytes) {
-    return (Number(bytes) / (1024 ** 3)).toFixed(2);
-  }
+const CLIENT_ID = "GANTI_DENGAN_CLIENT_ID_ANDA.apps.googleusercontent.com";
+const SCOPE = "https://www.googleapis.com/auth/drive";
 
-  async function fetchAll() {
-    const results = await Promise.all(ACCOUNTS.map(async function(acc) {
-      try {
-        const res = await fetch(acc.url + "?token=" + acc.token);
-        const data = await res.json();
-        if (data.error) {
-          return { name: acc.name, error: true, message: data.error };
-        }
-        return {
-          name: acc.name,
-          email: data.email,
-          limit: data.limit,
-          usage: data.usage,
-          error: false
-        };
-      } catch (err) {
-        return { name: acc.name, error: true, message: "Gagal menghubungi server" };
-      }
-    }));
-    render(results);
-  }
+let accounts = [];          // {email, token}
+let currentFolder = { accountEmail: null, id: "root" };
+let clipboard = null;       // {mode: 'copy'|'cut', item, sourceEmail}
+let selectedItem = null;
 
-  function render(results) {
-    let totalLimit = 0, totalUsage = 0;
-    const table = document.getElementById("table");
-    table.innerHTML = "<tr><th>Akun</th><th>Terpakai (GB)</th><th>Kapasitas (GB)</th><th>Status</th></tr>";
+function tambahAkun() {
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPE,
+    callback: async (resp) => {
+      if (resp.error) { alert("Gagal login: " + resp.error); return; }
+      const profile = await fetch("https://www.googleapis.com/drive/v3/about?fields=user,storageQuota", {
+        headers: { Authorization: "Bearer " + resp.access_token }
+      }).then(r => r.json());
 
-    results.forEach(function(r) {
-      if (r.error) {
-        table.innerHTML += "<tr><td>" + r.name + "</td><td colspan='2'>-</td><td style='color:red;'>" + r.message + "</td></tr>";
-        return;
-      }
-      totalLimit += Number(r.limit);
-      totalUsage += Number(r.usage);
-      table.innerHTML += "<tr><td>" + r.email + "</td><td>" + bytesToGB(r.usage) + "</td><td>" + bytesToGB(r.limit) + "</td><td style='color:green;'>Aktif</td></tr>";
+      accounts.push({
+        email: profile.user.emailAddress,
+        token: resp.access_token,
+        quota: profile.storageQuota
+      });
+      renderAccounts();
+      loadFolder(accounts[accounts.length - 1].email, "root");
+    }
+  });
+  client.requestAccessToken();
+}
+
+function renderAccounts() {
+  const list = document.getElementById("accountList");
+  list.innerHTML = "";
+  let totalLimit = 0, totalUsage = 0;
+  accounts.forEach(acc => {
+    totalLimit += Number(acc.quota.limit);
+    totalUsage += Number(acc.quota.usage);
+    const div = document.createElement("div");
+    div.className = "account";
+    div.innerText = acc.email;
+    div.onclick = () => loadFolder(acc.email, "root");
+    list.appendChild(div);
+  });
+  document.getElementById("storageSummary").innerText =
+    (totalUsage / 1024**3).toFixed(2) + " GB terpakai dari " + (totalLimit / 1024**3).toFixed(2) + " GB";
+}
+
+function getToken(email) {
+  return accounts.find(a => a.email === email).token;
+}
+
+async function loadFolder(email, folderId) {
+  currentFolder = { accountEmail: email, id: folderId };
+  const token = getToken(email);
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name,mimeType)`,
+    { headers: { Authorization: "Bearer " + token } }
+  );
+  const data = await res.json();
+  renderFiles(data.files || [], email);
+  document.getElementById("breadcrumb").innerText = email + " / " + (folderId === "root" ? "Root" : folderId);
+}
+
+function renderFiles(files, email) {
+  const grid = document.getElementById("fileGrid");
+  grid.innerHTML = "";
+  files.forEach(f => {
+    const isFolder = f.mimeType === "application/vnd.google-apps.folder";
+    const div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML = `<div class="icon">${isFolder ? "📁" : "📄"}</div><div>${f.name}</div>`;
+    div.onclick = () => {
+      document.querySelectorAll(".item").forEach(i => i.classList.remove("selected"));
+      div.classList.add("selected");
+      selectedItem = { ...f, ownerEmail: email };
+    };
+    div.ondblclick = () => { if (isFolder) loadFolder(email, f.id); };
+    grid.appendChild(div);
+  });
+}
+
+function buatFolder() {
+  const name = prompt("Nama folder baru:");
+  if (!name) return;
+  fetch("https://www.googleapis.com/drive/v3/files", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + getToken(currentFolder.accountEmail),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      name: name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [currentFolder.id]
+    })
+  }).then(() => loadFolder(currentFolder.accountEmail, currentFolder.id));
+}
+
+function uploadFileTrigger() { document.getElementById("fileInput").click(); }
+
+async function uploadFile(event) {
+  const file = event.target.files[0];
+  const metadata = { name: file.name, parents: [currentFolder.id] };
+  const form = new FormData();
+  form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+  form.append("file", file);
+
+  await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + getToken(currentFolder.accountEmail) },
+    body: form
+  });
+  loadFolder(currentFolder.accountEmail, currentFolder.id);
+}
+
+function salinItem() { if (selectedItem) clipboard = { mode: "copy", item: selectedItem }; }
+function potongItem() { if (selectedItem) clipboard = { mode: "cut", item: selectedItem }; }
+
+async function tempelItem() {
+  if (!clipboard) return;
+  const src = clipboard.item;
+  const sameAccount = src.ownerEmail === currentFolder.accountEmail;
+
+  if (sameAccount) {
+    if (clipboard.mode === "copy") {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${src.id}/copy`, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + getToken(currentFolder.accountEmail), "Content-Type": "application/json" },
+        body: JSON.stringify({ parents: [currentFolder.id] })
+      });
+    } else {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${src.id}?addParents=${currentFolder.id}&removeParents=root`, {
+        method: "PATCH",
+        headers: { Authorization: "Bearer " + getToken(currentFolder.accountEmail) }
+      });
+    }
+  } else {
+    // Proxy transfer antar akun berbeda
+    const downloadRes = await fetch(`https://www.googleapis.com/drive/v3/files/${src.id}?alt=media`, {
+      headers: { Authorization: "Bearer " + getToken(src.ownerEmail) }
     });
-
-    document.getElementById("totalUsage").innerText = bytesToGB(totalUsage);
-    document.getElementById("totalLimit").innerText = bytesToGB(totalLimit);
-
-    new Chart(document.getElementById("chart"), {
-      type: "doughnut",
-      data: {
-        labels: ["Terpakai", "Tersisa"],
-        datasets: [{
-          data: [bytesToGB(totalUsage), bytesToGB(totalLimit - totalUsage)],
-          backgroundColor: ["#e74c3c", "#2ecc71"]
-        }]
-      }
+    const blob = await downloadRes.blob();
+    const form = new FormData();
+    form.append("metadata", new Blob([JSON.stringify({ name: src.name, parents: [currentFolder.id] })], { type: "application/json" }));
+    form.append("file", blob);
+    await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + getToken(currentFolder.accountEmail) },
+      body: form
     });
+    if (clipboard.mode === "cut") {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${src.id}`, {
+        method: "DELETE",
+        headers: { Authorization: "Bearer " + getToken(src.ownerEmail) }
+      });
+    }
   }
+  clipboard = null;
+  loadFolder(currentFolder.accountEmail, currentFolder.id);
+}
 
-  fetchAll();
+function hapusItem() {
+  if (!selectedItem) return;
+  if (!confirm("Hapus " + selectedItem.name + "?")) return;
+  fetch(`https://www.googleapis.com/drive/v3/files/${selectedItem.id}`, {
+    method: "DELETE",
+    headers: { Authorization: "Bearer " + getToken(selectedItem.ownerEmail) }
+  }).then(() => loadFolder(currentFolder.accountEmail, currentFolder.id));
+}
+
+async function unduhItem() {
+  if (!selectedItem) return;
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${selectedItem.id}?alt=media`, {
+    headers: { Authorization: "Bearer " + getToken(selectedItem.ownerEmail) }
+  });
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = selectedItem.name;
+  a.click();
+}
 </script>
-
 </body>
 </html>
