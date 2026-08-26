@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Admin Panel - Tambah Akun Google Drive</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    label { display: block; margin-top: 10px; font-weight: bold; }
+    input { width: 100%; padding: 6px; margin-top: 4px; box-sizing: border-box; }
+    button { margin-top: 15px; padding: 8px 16px; cursor: pointer; }
+    textarea { width: 100%; margin-top: 10px; font-family: monospace; }
+    table { margin-top: 20px; width: 100%; border-collapse: collapse; }
+    table, th, td { border: 1px solid #ccc; padding: 6px; }
+  </style>
+</head>
+<body>
+
+<h2>Admin Panel: Tambah Akun Google Drive</h2>
+
+<label for="name">Nama Akun</label>
+<input type="text" id="name" placeholder="Contoh: Akun Kerja">
+
+<label for="url">URL Web App</label>
+<input type="text" id="url" placeholder="https://script.google.com/macros/s/XXXX/exec">
+
+<label for="token">Token</label>
+<input type="text" id="token" placeholder="Contoh: a1b2c3d4-e5f6-7890-gh12-ijklmn345678">
+
+<button onclick="tambah()">Tambah Akun</button>
+<button onclick="hapusSemua()">Hapus Semua Data</button>
+
+<h3>Daftar Akun Tersimpan</h3>
+<table id="tabelAkun">
+  <tr><th>No</th><th>Nama</th><th>URL</th><th>Token</th><th>Aksi</th></tr>
+</table>
+
+<h3>Hasil config.js (salin seluruh isi kotak di bawah ke berkas config.js)</h3>
+<textarea id="output" rows="15"></textarea>
+
+<script>
+  function ambilData() {
+    return JSON.parse(localStorage.getItem("accounts") || "[]");
+  }
+
+  function simpanData(data) {
+    localStorage.setItem("accounts", JSON.stringify(data));
+  }
+
+  function tambah() {
+    var name = document.getElementById("name").value.trim();
+    var url = document.getElementById("url").value.trim();
+    var token = document.getElementById("token").value.trim();
+
+    if (!name || !url || !token) {
+      alert("Seluruh kolom wajib diisi.");
+      return;
+    }
+
+    var data = ambilData();
+    data.push({ name: name, url: url, token: token });
+    simpanData(data);
+
+    document.getElementById("name").value = "";
+    document.getElementById("url").value = "";
+    document.getElementById("token").value = "";
+
+    render();
+  }
+
+  function hapus(index) {
+    var data = ambilData();
+    data.splice(index, 1);
+    simpanData(data);
+    render();
+  }
+
+  function hapusSemua() {
+    if (confirm("Yakin ingin menghapus seluruh data tersimpan?")) {
+      localStorage.removeItem("accounts");
+      render();
+    }
+  }
+
+  function render() {
+    var data = ambilData();
+    var tabel = document.getElementById("tabelAkun");
+    tabel.innerHTML = "<tr><th>No</th><th>Nama</th><th>URL</th><th>Token</th><th>Aksi</th></tr>";
+
+    data.forEach(function(acc, i) {
+      tabel.innerHTML += "<tr>" +
+        "<td>" + (i + 1) + "</td>" +
+        "<td>" + acc.name + "</td>" +
+        "<td>" + acc.url + "</td>" +
+        "<td>" + acc.token + "</td>" +
+        "<td><button onclick='hapus(" + i + ")'>Hapus</button></td>" +
+        "</tr>";
+    });
+
+    var text = "const ACCOUNTS = " + JSON.stringify(data, null, 2) + ";";
+    document.getElementById("output").value = text;
+  }
+
+  render();
+</script>
+
+</body>
+</html>
