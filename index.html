@@ -101,9 +101,8 @@
     <button onclick="modalCancel()">Batal</button>
   </div>
 </div>
-
 <script>
-const CLIENT_ID = "1023502925018-5g4u6p841036p64di1qbo2q0fd8mrou5.apps.googleusercontent.com";
+const CLIENT_ID = "GANTI_DENGAN_CLIENT_ID_ANDA.apps.googleusercontent.com";
 const SCOPE = "https://www.googleapis.com/auth/drive";
 
 let accounts = [];
@@ -227,7 +226,7 @@ function getIcon(item) {
   if (/\.(xls|xlsx|csv)$/.test(name)) return "📗";
   if (/\.(ppt|pptx)$/.test(name)) return "📙";
   if (/\.(zip|rar|7z|tar|gz)$/.test(name)) return "🗜️";
-  if (/\.(txt|md)\$/.test(name)) return "📄";
+  if (/\.(txt|md)$/.test(name)) return "📄";
   return "📄";
 }
 
@@ -285,4 +284,187 @@ document.addEventListener("click", (e) => {
 function ctxOpen() {
   hideContextMenu();
   if (!selectedItem) return;
-  if (selectedItem.mimeType === "application
+  if (selectedItem.mimeType === "application/vnd.google-apps.folder") {
+    loadFolder(selectedItem.ownerEmail, selectedItem.id);
+  } else {
+    unduhItem();
+  }
+}
+
+function ctxRename() {
+  hideContextMenu();
+  if (!selectedItem) { alert("Pilih berkas atau folder terlebih dahulu."); return; }
+  const namaBaru = prompt("Masukkan nama baru:", selectedItem.name);
+  if (!namaBaru || namaBaru.trim() === "") return;
+  fetch(`https://www.googleapis.com/drive/v3/files/${selectedItem.id}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: "Bearer " + getToken(selectedItem.ownerEmail),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ name: namaBaru.trim() })
+  }).then(() => loadFolder(currentFolder.accountEmail, currentFolder.id));
+}
+
+function ctxProperties() {
+  hideContextMenu();
+  if (!selectedItem) return;
+  const isFolder = selectedItem.mimeType === "application/vnd.google-apps.folder";
+  alert(
+    "Nama: " + selectedItem.name + "\n" +
+    "Jenis: " + (isFolder ? "Folder" : "Berkas") + "\n" +
+    "Ukuran: " + (isFolder ? "-" : formatUkuran(selectedItem.size)) + "\n" +
+    "Terakhir Diubah: " + formatTanggal(selectedItem.modifiedTime) + "\n" +
+    "Akun Pemilik: " + selectedItem.ownerEmail
+  );
+}
+
+/* ================= MODAL KONFIRMASI HAPUS ================= */
+
+function showModal(text, onConfirm) {
+  document.getElementById("modalText").innerText = text;
+  document.getElementById("modalOverlay").style.display = "flex";
+  modalCallback = onConfirm;
+}
+
+function modalConfirm() {
+  document.getElementById("modalOverlay").style.display = "none";
+  if (modalCallback) modalCallback();
+  modalCallback = null;
+}
+
+function modalCancel() {
+  document.getElementById("modalOverlay").style.display = "none";
+  modalCallback = null;
+}
+
+/* ================= OPERASI BERKAS & FOLDER ================= */
+
+function buatFolder() {
+  if (!currentFolder.accountEmail) { alert("Pilih akun terlebih dahulu."); return; }
+  const nama = prompt("Nama folder baru:");
+  if (!nama || nama.trim() === "") return;
+  fetch("https://www.googleapis.com/drive/v3/files", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + getToken(currentFolder.accountEmail),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      name: nama.trim(),
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [currentFolder.id]
+    })
+  }).then(() => loadFolder(currentFolder.accountEmail, currentFolder.id));
+}
+
+function uploadFileTrigger() {
+  if (!currentFolder.accountEmail) { alert("Pilih akun terlebih dahulu."); return; }
+  document.getElementById("fileInput").click();
+}
+
+async function uploadFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const metadata = { name: file.name, parents: [currentFolder.id] };
+  const form = new FormData();
+  form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+  form.append("file", file);
+
+  await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + getToken(currentFolder.accountEmail) },
+    body: form
+  });
+
+  event.target.value = "";
+  loadFolder(currentFolder.accountEmail, currentFolder.id);
+  refreshQuota(currentFolder.accountEmail);
+}
+
+function salinItem() {
+  if (!selectedItem) { alert("Pilih berkas atau folder terlebih dahulu."); return; }
+  clipboard = { ...selectedItem, mode: "copy" };
+}
+
+function potongItem() {
+  if (!selectedItem) { alert("Pilih berkas atau folder terlebih dahulu."); return; }
+  clipboard = { ...selectedItem, mode: "cut" };
+}
+
+async function tempelItem() {
+  if (!clipboard) { alert("Tidak ada item pada papan klip."); return; }
+  const sameAccount = clipboard.ownerEmail === currentFolder.accountEmail;
+
+  if (clipboard.mode === "cut" && sameAccount) {
+    await fetch(`https://www.googleapis.com/drive/v3/files/${clipboard.id}`, {
+      method: "PATCH",
+      headers: { Authorization: "Bearer " + getToken(clipboard.ownerEmail) },
+      body: JSON.stringify({})
+    });
+    await fetch(`https://www.googleapis.com/drive/v3/files/${clipboard.id}?addParents=${currentFolder.id}&removeParents=root`, {
+      method: "PATCH",
+      headers: { Authorization: "Bearer " + getToken(clipboard.ownerEmail) }
+    });
+  } else {
+    const resFile = await fetch(`https://www.googleapis.com/drive/v3/files/${clipboard.id}?alt=media`, {
+      headers: { Authorization: "Bearer " + getToken(clipboard.ownerEmail) }
+    });
+    const blob = await resFile.blob();
+
+    const metadata = { name: clipboard.name, parents: [currentFolder.id] };
+    const form = new FormData();
+    form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+    form.append("file", blob);
+
+    await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + getToken(currentFolder.accountEmail) },
+      body: form
+    });
+
+    if (clipboard.mode === "cut") {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${clipboard.id}`, {
+        method: "DELETE",
+        headers: { Authorization: "Bearer " + getToken(clipboard.ownerEmail) }
+      });
+      refreshQuota(clipboard.ownerEmail);
+    }
+  }
+
+  clipboard = null;
+  loadFolder(currentFolder.accountEmail, currentFolder.id);
+  refreshQuota(currentFolder.accountEmail);
+}
+
+function hapusItem() {
+  if (!selectedItem) { alert("Pilih berkas atau folder terlebih dahulu."); return; }
+  showModal("Yakin mau dihapus \"" + selectedItem.name + "\"?", () => {
+    fetch(`https://www.googleapis.com/drive/v3/files/${selectedItem.id}`, {
+      method: "DELETE",
+      headers: { Authorization: "Bearer " + getToken(selectedItem.ownerEmail) }
+    }).then(() => {
+      loadFolder(currentFolder.accountEmail, currentFolder.id);
+      refreshQuota(selectedItem.ownerEmail);
+      selectedItem = null;
+    });
+  });
+}
+
+async function unduhItem() {
+  if (!selectedItem) { alert("Pilih berkas terlebih dahulu."); return; }
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${selectedItem.id}?alt=media`, {
+    headers: { Authorization: "Bearer " + getToken(selectedItem.ownerEmail) }
+  });
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = selectedItem.name;
+  a.click();
+}
+</script>
+ 
+</body>
+</html>
+
